@@ -221,7 +221,8 @@
   var data={leads:[],lotes:[],cfg:Object.assign({},DEF)};
   var view="leads",stageF="todos",period="semana";
   var customStart=null,customEnd=null;
-  var tagF=[],booksMin=0,loteF="todos",search="";
+  var tagF=[],booksMin=0,loteF="todos",search="",oasisF="todos";
+  var lostNaoOasis=false;
   var parsed=null,parseErr="",impMeta={evento:"",dataStr:""};
 
   var STAGES=[{k:"a_chamar",rank:0,label:"A chamar",cls:"a"},{k:"chamei",rank:1,label:"Chamei",cls:"c"},{k:"no_grupo",rank:2,label:"No grupo",cls:"g"},{k:"fechou",rank:3,label:"Fechou",cls:"f"}];
@@ -279,8 +280,32 @@
   function find(id){for(var i=0;i<data.leads.length;i++)if(data.leads[i].id===id)return data.leads[i];return null;}
   function setStage(id,k){var c=find(id);if(!c)return;c.stage=k;c.lost=false;c.mudou=Date.now();c.maxRank=Math.max(c.maxRank||0,stageOf(k).rank);}
   function advance(id){var c=find(id);if(!c)return;var r=stageOf(c.stage).rank;if(r<3)setStage(id,STAGES[r+1].k);}
-  function regress(id){var c=find(id);if(!c)return;if(c.lost){c.lost=false;c.mudou=Date.now();return;}var r=stageOf(c.stage).rank;if(r>0){c.stage=STAGES[r-1].k;c.mudou=Date.now();}}
-  function markLost(id){var c=find(id);if(!c)return;c.maxRank=Math.max(c.maxRank||0,stageOf(c.stage).rank);c.lost=true;c.mudou=Date.now();}
+  function regress(id){var c=find(id);if(!c)return;if(c.lost){c.lost=false;c.lostReason="";c.notOasis=false;c.mudou=Date.now();return;}var r=stageOf(c.stage).rank;if(r>0){c.stage=STAGES[r-1].k;c.mudou=Date.now();}}
+  function markLost(id,reason,notOasis){var c=find(id);if(!c)return;c.maxRank=Math.max(c.maxRank||0,stageOf(c.stage).rank);c.lost=true;c.lostReason=(reason||"").trim();c.notOasis=!!notOasis;c.mudou=Date.now();}
+  function openLostReason(id){
+    close();lostNaoOasis=false;
+    var inner='<h2>Motivo da perda</h2>'
+      +'<div class="hint">Registre por que perdeu este contato. Isso fica salvo no perfil dele.</div>'
+      +'<div style="margin-bottom:10px"><button id="btn_nao_oasis" class="menu-item" onclick="L.toggleNaoOasis(this)"><span class="ic">🚫</span> Não é Oasis</button></div>'
+      +'<div class="field"><label>Descrição do motivo (opcional)</label>'
+      +'<textarea id="f_lost_reason" placeholder="Ex.: sem interesse, não respondeu mais, já tem produto similar…" style="min-height:90px"></textarea></div>'
+      +'<div class="sheet-actions">'
+      +'<button class="cancel" onclick="L.close()">Cancelar</button>'
+      +'<button class="save" onclick="L.saveLost(\''+id+'\')">Confirmar perda</button>'
+      +'</div>';
+    scrim(inner);
+  }
+  function toggleNaoOasis(btn){
+    lostNaoOasis=!lostNaoOasis;
+    if(lostNaoOasis){btn.style.background="#fbe9e4";btn.style.color="var(--danger)";btn.style.borderColor="#e8b0a0";}
+    else{btn.style.background="";btn.style.color="";btn.style.borderColor="";}
+  }
+  async function saveLost(id){
+    var reason=(document.getElementById("f_lost_reason")||{}).value||"";
+    markLost(id,reason,lostNaoOasis);
+    lostNaoOasis=false;
+    await save();close();render();
+  }
   function rm(id){data.leads=data.leads.filter(function(c){return c.id!==id;});}
   function bucket(c){return c.lost?"perdido":c.stage;}
 
@@ -295,11 +320,13 @@
       if(loteF!=="todos"&&c.loteId!==loteF)return false;
       if(booksMin>0&&(c.qtdLivros||0)<booksMin)return false;
       if(tagF.length&&!tagF.some(function(t){return(c.tags||[]).indexOf(t)>=0;}))return false;
+      if(oasisF==="oasis"&&c.notOasis)return false;
+      if(oasisF==="nao_oasis"&&!c.notOasis)return false;
       if(search){var q=search.toLowerCase(),qd=dg(q);var hit=(c.nome||"").toLowerCase().indexOf(q)>=0||(c.tags||[]).join(" ").indexOf(q)>=0||(qd&&dg(c.tel).indexOf(qd)>=0);if(!hit)return false;}
       return true;
     });
   }
-  function filtersActive(){return stageF!=="todos"||loteF!=="todos"||booksMin>0||tagF.length||search;}
+  function filtersActive(){return stageF!=="todos"||loteF!=="todos"||booksMin>0||tagF.length||search||oasisF!=="todos";}
 
   function render(){
     var el=document.getElementById("app"),c=counts();
@@ -326,6 +353,11 @@
     h+='<div class="toolbar"><div class="search"><input id="searchbox" placeholder="Buscar por nome, tag ou telefone…"></div>';
     var st=[["todos","","Todos",c.todos],["a_chamar","a","A chamar",c.a_chamar],["chamei","c","Chamei",c.chamei],["no_grupo","g","No grupo",c.no_grupo],["fechou","f",("Fechou "+win()),c.fechou],["perdido","p","Perdidos",c.perdido]];
     h+='<div class="chiprow">';st.forEach(function(t){h+='<button class="ch t-'+t[1]+' '+(stageF===t[0]?"on":"")+'" onclick="L.stage(\''+t[0]+'\')">'+esc(t[2])+'<span class="n">'+t[3]+'</span></button>';});h+='</div>';
+    h+='<div class="chiprow">'
+      +'<button class="ch '+(oasisF==="todos"?"on t-a":"")+'" onclick="L.oasis(\'todos\')">Todos</button>'
+      +'<button class="ch '+(oasisF==="oasis"?"on":"")+(oasisF==="oasis"?" t-g":"")+'" onclick="L.oasis(\'oasis\')">🌀 Oasis</button>'
+      +'<button class="ch '+(oasisF==="nao_oasis"?"on t-p":"")+'" onclick="L.oasis(\'nao_oasis\')">🚫 Não é Oasis</button>'
+      +'</div>';
     h+='<div class="chiprow" style="gap:10px;align-items:center"><select class="lotesel" onchange="L.loteFilter(this.value)"><option value="todos"'+(loteF==="todos"?" selected":"")+'>Todas as listas</option>';
     data.lotes.forEach(function(l){h+='<option value="'+l.id+'"'+(loteF===l.id?" selected":"")+'>'+esc(loteLabel(l))+' ('+leadsOfLote(l.id).length+')</option>';});
     h+='</select>';
@@ -350,6 +382,8 @@
     if(x.qtdLivros>0)ch.push('<span class="chip books">📚 '+x.qtdLivros+'</span>');
     (x.tags||[]).forEach(function(t){ch.push('<span class="chip">#'+esc(t)+'</span>');});
     if(lt)ch.push('<span class="chip lote">'+esc(loteLabel(lt))+'</span>');
+    if(x.lost&&x.notOasis)ch.push('<span class="chip" style="background:#fbe9e4;color:var(--danger)">🚫 Não é Oasis</span>');
+    if(x.lost&&x.lostReason)ch.push('<span class="chip muted" title="'+esc(x.lostReason)+'">💬 '+esc(x.lostReason.length>40?x.lostReason.slice(0,40)+"…":x.lostReason)+'</span>');
     if(ch.length)h+='<div class="chips">'+ch.join("")+'</div>';
     h+='<div class="actions">';
     h+='<button class="btn btn-next" '+((!x.lost&&x.stage!=="fechou")?"":"disabled")+' onclick="L.adv(\''+x.id+'\')">'+nx+'</button>';
@@ -512,8 +546,9 @@
   }
   async function act(id,w){
     if(w==="editar"){close();openAdd(id);return;}
+    if(w==="perdido"){openLostReason(id);return;}
     if(w==="excluir"){if(!confirm("Excluir este lead?"))return;rm(id);}
-    else if(w==="fechou")setStage(id,"fechou");else if(w==="perdido")markLost(id);else if(w==="reativar"||w==="voltar")regress(id);
+    else if(w==="fechou")setStage(id,"fechou");else if(w==="reativar"||w==="voltar")regress(id);
     await save();close();render();
   }
   function settings(){
@@ -527,7 +562,7 @@
   async function saveCfg(){data.cfg.win=document.getElementById("f_win").value.trim()||"Oásis";await save();close();render();}
   async function reset(){if(!confirm("Isso apaga TODOS os leads e listas. Tem certeza?"))return;data.leads=[];data.lotes=[];await save();close();stageF="todos";loteF="todos";tagF=[];booksMin=0;render();}
 
-  function buildCsv(){var rows=[["Nome","Telefone","Livros","Tags","Lista","Etapa","Perdido","Criado"]];data.leads.forEach(function(c){var l=loteById(c.loteId);rows.push([c.nome,c.tel,c.qtdLivros,(c.tags||[]).join("; "),l?loteLabel(l):"",(c.stage==="fechou"?("Fechou "+win()):stageOf(c.stage).label),c.lost?"sim":"não",new Date(c.criado).toLocaleDateString("pt-BR")]);});return rows.map(function(r){return r.map(function(v){return'"'+String(v==null?"":v).replace(/"/g,'""')+'"';}).join(",");}).join("\n");}
+  function buildCsv(){var rows=[["Nome","Telefone","Livros","Tags","Lista","Etapa","Perdido","Não é Oasis","Motivo Perda","Criado"]];data.leads.forEach(function(c){var l=loteById(c.loteId);rows.push([c.nome,c.tel,c.qtdLivros,(c.tags||[]).join("; "),l?loteLabel(l):"",(c.stage==="fechou"?("Fechou "+win()):stageOf(c.stage).label),c.lost?"sim":"não",c.notOasis?"sim":"não",c.lostReason||"",new Date(c.criado).toLocaleDateString("pt-BR")]);});return rows.map(function(r){return r.map(function(v){return'"'+String(v==null?"":v).replace(/"/g,'""')+'"';}).join(",");}).join("\n");}
   function csv(){try{var b=new Blob(["\ufeff"+buildCsv()],{type:"text/csv;charset=utf-8;"});var u=URL.createObjectURL(b);var a=document.createElement("a");a.href=u;a.download="leads-resende.csv";a.click();setTimeout(function(){URL.revokeObjectURL(u);},1000);}catch(e){alert("Não consegui exportar aqui.");}}
   function copy(){var n=funnelOf(data.leads.filter(inP));var txt="📊 "+APP_NAME+" — "+periodLabel()+"\nRecebidos: "+n.recebidos+"\nChamei: "+n.chamados+" ("+pct(n.chamados,n.recebidos)+"%)\nNo grupo: "+n.grupo+" ("+pct(n.grupo,n.chamados)+"%)\nFecharam "+win()+": "+n.fechou+" ("+pct(n.fechou,n.grupo)+"% do grupo)\nConversão geral: "+pct(n.fechou,n.recebidos)+"%";if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(txt).then(function(){alert("Resumo copiado!");},function(){prompt("Copie:",txt);});else prompt("Copie:",txt);}
 
@@ -550,10 +585,11 @@
   function viewLote(id){loteF=id;stageF="todos";view="leads";render();window.scrollTo(0,0);}
 
   window.L={go:go,stage:function(k){stageF=k;render();},loteFilter:function(v){loteF=v;render();},books:function(n){booksMin=Number(n)||0;render();},
-    tag:function(t){var i=tagF.indexOf(t);if(i>=0)tagF.splice(i,1);else tagF.push(t);render();},clearF:function(){stageF="todos";loteF="todos";booksMin=0;tagF=[];search="";render();},
+    tag:function(t){var i=tagF.indexOf(t);if(i>=0)tagF.splice(i,1);else tagF.push(t);render();},clearF:function(){stageF="todos";loteF="todos";booksMin=0;tagF=[];search="";oasisF="todos";render();},
     period:function(p){period=p;render();},customPeriod:customPeriod,applyPeriod:applyPeriod,openImport:openImport,runAI:runAI,dropP:dropP,commitP:commitP,
     openAdd:function(){close();openAdd();},saveAdd:saveAdd,more:more,act:act,adv:function(id){advance(id);save();render();},
-    viewLote:viewLote,settings:settings,saveCfg:saveCfg,reset:reset,csv:csv,copy:copy,close:close};
+    viewLote:viewLote,settings:settings,saveCfg:saveCfg,reset:reset,csv:csv,copy:copy,close:close,
+    oasis:function(v){oasisF=v;render();},toggleNaoOasis:toggleNaoOasis,saveLost:saveLost};
 
   load().then(render);
 })();
